@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuickMail - Free Temporary Email Service</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+<body class="bg-slate-50 font-sans text-slate-900">
+
+    <nav class="bg-white border-b border-slate-200 py-4 shadow-sm">
+        <div class="max-w-5xl mx-auto px-6 flex justify-between items-center">
+            <h1 class="text-2xl font-black text-indigo-600 tracking-tighter">QUICKMAIL</h1>
+            <span class="text-xs font-bold bg-indigo-100 text-indigo-600 px-2 py-1 rounded">FREE UTILITY</span>
+        </div>
+    </nav>
+
+    <main class="max-w-4xl mx-auto px-6 py-12">
+        <div class="mb-8 flex justify-center">
+            </div>
+
+        <div class="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
+            <div class="p-8 border-b border-slate-50 text-center bg-indigo-600">
+                <h2 class="text-white text-lg font-medium opacity-90 mb-4">Your Temporary Email Address</h2>
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                    <input id="emailAddr" readonly class="w-full sm:w-2/3 bg-indigo-700/50 border border-indigo-400 text-white text-xl font-bold p-4 rounded-xl text-center outline-none" value="Generating...">
+                    <button id="copyBtn" class="w-full sm:w-auto bg-white text-indigo-600 px-8 py-4 rounded-xl font-bold hover:bg-slate-100 transition-all active:scale-95 shadow-lg">Copy</button>
+                </div>
+            </div>
+
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xl font-bold">Inbox</h3>
+                    <div class="flex items-center gap-2 text-sm text-slate-400">
+                        <span id="refreshIcon" class="animate-spin h-2 w-2 bg-green-500 rounded-full"></span>
+                        Auto-refreshing...
+                    </div>
+                </div>
+
+                <div id="inboxList" class="space-y-4">
+                    <div class="text-center py-20 text-slate-400 italic">Waiting for incoming emails...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-12 flex justify-center">
+            </div>
+    </main>
+
+    <div id="emailModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-2xl rounded-2xl p-8 max-h-[80vh] overflow-y-auto">
+            <h2 id="modalSubject" class="text-2xl font-bold mb-4"></h2>
+            <div id="modalContent" class="text-slate-600 leading-relaxed border-t pt-4"></div>
+            <button onclick="closeModal()" class="mt-6 w-full bg-slate-100 py-3 rounded-xl font-bold hover:bg-slate-200">Close</button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "https://api.mail.tm";
+        let currentAccount = null;
+        let seenIds = new Set();
+
+        async function init() {
+            // 1. Get Domain
+            const domains = await fetch(`${API_URL}/domains`).then(res => res.json());
+            const domain = domains["hydra:member"][0].domain;
+            
+            // 2. Create Random Account
+            const user = Math.random().toString(36).substring(7);
+            const password = "Password123!";
+            const email = `${user}@${domain}`;
+
+            const account = await fetch(`${API_URL}/accounts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: email, password: password })
+            }).then(res => res.json());
+
+            // 3. Get Token
+            const tokenData = await fetch(`${API_URL}/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: email, password: password })
+            }).then(res => res.json());
+
+            currentAccount = { ...account, token: tokenData.token };
+            document.getElementById('emailAddr').value = email;
+            
+            // Start Polling
+            checkInbox();
+            setInterval(checkInbox, 5000); // Check every 5 seconds
+        }
+
+        async function checkInbox() {
+            if (!currentAccount) return;
+            
+            try {
+                const messages = await fetch(`${API_URL}/messages`, {
+                    headers: { 'Authorization': `Bearer ${currentAccount.token}` }
+                }).then(res => res.json());
+
+                const list = document.getElementById('inboxList');
+                const items = messages["hydra:member"];
+
+                if (items.length > 0) {
+                    list.innerHTML = '';
+                    items.forEach(msg => {
+                        const div = document.createElement('div');
+                        div.className = "p-4 border border-slate-100 rounded-xl hover:bg-slate-50 cursor-pointer transition-all border-l-4 border-l-indigo-500 shadow-sm";
+                        div.innerHTML = `
+                            <div class="flex justify-between mb-1">
+                                <span class="font-bold text-indigo-600">${msg.from.address}</span>
+                                <span class="text-xs text-slate-400">${new Date(msg.createdAt).toLocaleTimeString()}</span>
+                            </div>
+                            <div class="text-sm font-medium">${msg.subject}</div>
+                        `;
+                        div.onclick = () => readEmail(msg.id);
+                        list.appendChild(div);
+                    });
+                }
+            } catch (e) { console.error("Refresh failed", e); }
+        }
+
+        async function readEmail(id) {
+            const msg = await fetch(`${API_URL}/messages/${id}`, {
+                headers: { 'Authorization': `Bearer ${currentAccount.token}` }
+            }).then(res => res.json());
+
+            document.getElementById('modalSubject').innerText = msg.subject;
+            document.getElementById('modalContent').innerHTML = msg.html || msg.text;
+            document.getElementById('emailModal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('emailModal').classList.add('hidden');
+        }
+
+        document.getElementById('copyBtn').onclick = () => {
+            const input = document.getElementById('emailAddr');
+            input.select();
+            document.execCommand('copy');
+            alert("Email Copied!");
+        };
+
+        init();
+    </script>
+</body>
+</html>
